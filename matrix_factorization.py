@@ -3,36 +3,20 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 import time
 import argparse
+import matplotlib.pyplot as plt
 
 def matrix_factorization_step(R, P, Q, K, alpha, beta):
-    """
-    Perform one step of matrix factorization using SGD.
-    
-    R: User-item rating matrix
-    P: User-feature matrix
-    Q: Item-feature matrix
-    K: Number of latent features
-    alpha: Learning rate
-    beta: Regularization parameter
-    """
     Q = Q.T
     for i in range(len(R)):
         for j in range(len(R[i])):
             if R[i][j] > 0:
                 eij = R[i][j] - np.dot(P[i,:], Q[:,j])
                 for k in range(K):
-                    P[i][k] = P[i][k] + alpha * (2 * eij * Q[k][j] - beta * P[i][k])
-                    Q[k][j] = Q[k][j] + alpha * (2 * eij * P[i][k] - beta * Q[k][j])
+                    P[i][k] += alpha * (2 * eij * Q[k][j] - beta * P[i][k])
+                    Q[k][j] += alpha * (2 * eij * P[i][k] - beta * Q[k][j])
     return P, Q.T
 
 def calculate_rmse(matrix, P, Q):
-    """
-    Calculate RMSE for the matrix factorization.
-    
-    matrix: The original user-item rating matrix
-    P: User-feature matrix
-    Q: Item-feature matrix
-    """
     Q = Q.T
     predicted = np.dot(P, Q)
     error = 0
@@ -44,38 +28,40 @@ def calculate_rmse(matrix, P, Q):
                 count += 1
     return np.sqrt(error / count)
 
-def train_model(R, P, Q, K, steps, alpha, beta, log_file, test_matrix):
-    """
-    Train the matrix factorization model.
-    
-    R: Training user-item rating matrix
-    P: User-feature matrix
-    Q: Item-feature matrix
-    K: Number of latent features
-    steps: Number of iterations
-    alpha: Learning rate
-    beta: Regularization parameter
-    log_file: Log file path
-    test_matrix: Test user-item rating matrix for evaluation
-    """
+def train(R, P, Q, K, steps, alpha, beta, log_file, eval_interval, test_matrix):
     with open(log_file, "w") as log:
-        start_time = time.time()
-        
         for step in range(steps):
-            step_start_time = time.time()
             P, Q = matrix_factorization_step(R, P, Q, K, alpha, beta)
 
-            if (step + 1) % 10 == 0:
+            if (step + 1) % eval_interval == 0:
                 train_rmse = calculate_rmse(R, P, Q)
                 test_rmse = calculate_rmse(test_matrix, P, Q)
-                step_end_time = time.time()
-                log.write(f"Step {step + 1} | Training RMSE: {train_rmse:.4f} | Test RMSE: {test_rmse:.4f} | Time: {step_end_time - step_start_time:.4f} seconds\n")
+                log.write(f"{step + 1},{train_rmse:.4f},{test_rmse:.4f}\n")
                 log.flush()
-
-        total_time = time.time() - start_time
-        log.write(f"Total time taken for matrix factorization: {total_time:.4f} seconds\n")
-    
     return P, Q
+
+def plot_training_log(log_file):
+    epochs = []
+    train_rmse = []
+    test_rmse = []
+
+    with open(log_file, "r") as log:
+        for line in log:
+            epoch, train, test = line.strip().split(',')
+            epochs.append(int(epoch))
+            train_rmse.append(float(train))
+            test_rmse.append(float(test))
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, train_rmse, label="Training RMSE")
+    plt.plot(epochs, test_rmse, label="Test RMSE")
+    plt.xlabel("Epoch")
+    plt.ylabel("RMSE")
+    plt.title("Training and Evaluation RMSE over Epochs")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("training_evaluation_curve.png")
+    plt.show()
 
 def load_movielens_data():
     url = 'https://files.grouplens.org/datasets/movielens/ml-100k/u.data'
@@ -100,22 +86,7 @@ def prepare_data(df):
     
     return train_matrix, test_matrix, num_users, num_items
 
-def evaluate_model(P, Q, train_matrix, test_matrix):
-    """
-    Evaluate the model on training and test sets.
-    
-    P: User-feature matrix
-    Q: Item-feature matrix
-    train_matrix: Training user-item rating matrix
-    test_matrix: Test user-item rating matrix
-    """
-    train_rmse = calculate_rmse(train_matrix, P, Q)
-    test_rmse = calculate_rmse(test_matrix, P, Q)
-    
-    print(f"Final Training RMSE: {train_rmse:.4f}")
-    print(f"Final Test RMSE: {test_rmse:.4f}")
-
-def main(K, steps, alpha, beta, log_filename):
+def main(K, steps, alpha, beta, log_filename, eval_interval):
     df = load_movielens_data()
     train_matrix, test_matrix, num_users, num_items = prepare_data(df)
     
@@ -124,10 +95,10 @@ def main(K, steps, alpha, beta, log_filename):
     Q = np.random.rand(num_items, K)
     
     # Train the model
-    nP, nQ = train_model(train_matrix, P, Q, K, steps, alpha, beta, log_filename, test_matrix)
+    nP, nQ = train(train_matrix, P, Q, K, steps, alpha, beta, log_filename, eval_interval, test_matrix)
     
-    # Evaluate the model
-    evaluate_model(nP, nQ, train_matrix, test_matrix)
+    # Plot the training log
+    plot_training_log(log_filename)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Matrix Factorization on MovieLens 100K")
@@ -136,7 +107,8 @@ if __name__ == "__main__":
     parser.add_argument('--alpha', type=float, default=0.0002, help='Learning rate')
     parser.add_argument('--beta', type=float, default=0.02, help='Regularization parameter')
     parser.add_argument('--log_filename', type=str, default='training_log.txt', help='Log file name')
+    parser.add_argument('--eval_interval', type=int, default=10, help='Evaluation interval in epochs')
     
     args = parser.parse_args()
     
-    main(K=args.K, steps=args.steps, alpha=args.alpha, beta=args.beta, log_filename=args.log_filename)
+    main(K=args.K, steps=args.steps, alpha=args.alpha, beta=args.beta, log_filename=args.log_filename, eval_interval=args.eval_interval)
